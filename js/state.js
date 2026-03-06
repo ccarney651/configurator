@@ -2,6 +2,70 @@
  * state.js — single source of truth.
  */
 
+// ─── UNDO / REDO ────────────────────────────────────────────────────────────────
+
+const stateHistory = {
+  stack: [],
+  pointer: -1,
+  maxSize: 50,
+  _paused: false,
+
+  push() {
+    if (this._paused) return;
+    const snap = JSON.stringify(state);
+    // Skip if identical to current
+    if (this.pointer >= 0 && this.stack[this.pointer] === snap) return;
+    // Truncate any redo entries
+    this.stack.length = this.pointer + 1;
+    this.stack.push(snap);
+    if (this.stack.length > this.maxSize) this.stack.shift();
+    this.pointer = this.stack.length - 1;
+    this._updateButtons();
+  },
+
+  undo() {
+    if (this.pointer <= 0) return;
+    this.pointer--;
+    this._restore();
+  },
+
+  redo() {
+    if (this.pointer >= this.stack.length - 1) return;
+    this.pointer++;
+    this._restore();
+  },
+
+  _restore() {
+    this._paused = true;
+    const snap = JSON.parse(this.stack[this.pointer]);
+    // Restore all keys
+    Object.keys(snap).forEach(k => {
+      if (typeof snap[k] === 'object' && snap[k] !== null && !Array.isArray(snap[k])) {
+        Object.assign(state[k], snap[k]);
+      } else {
+        state[k] = snap[k];
+      }
+    });
+    if (typeof buildRoom === 'function') buildRoom();
+    if (typeof updatePriceDisplay === 'function') updatePriceDisplay();
+    if (typeof syncSwatchesToState === 'function') syncSwatchesToState();
+    if (typeof syncDimSliders === 'function') syncDimSliders();
+    if (typeof renderOpeningsList === 'function') renderOpeningsList();
+    this._paused = false;
+    this._updateButtons();
+  },
+
+  _updateButtons() {
+    const ub = document.getElementById('tbUndo');
+    const rb = document.getElementById('tbRedo');
+    if (ub) ub.disabled = this.pointer <= 0;
+    if (rb) rb.disabled = this.pointer >= this.stack.length - 1;
+  },
+
+  canUndo() { return this.pointer > 0; },
+  canRedo() { return this.pointer < this.stack.length - 1; },
+};
+
 const state = {
   // Dimensions
   width:  5.0,
@@ -76,4 +140,20 @@ const state = {
   deckingMaterial:        'softwood',
   deckingBalustrade:      'none',
   deckingBalustradeFinish: 'black',
+
+  // Scene environment
+  groundType: 'grass',
+
+  // Roof controls
+  apexPitch: 1.0,        // ridge height in metres (0.5–1.8)
+  windowSillAdjust: 0,   // global window sill offset in metres (-0.3 to +0.3)
+
+  // Veranda
+  veranda: { enabled: false, depth: 2.0 },
+
+  // Guttering colour
+  gutterColour: '#1a1a1a',
+
+  // Display preferences (transient — not saved to URL)
+  units: 'metric',
 };

@@ -21,6 +21,7 @@ const PRICING_DEFAULTS = {
 
   // Roof style add-ons (flat = 0, not stored)
   roof_style_apex:             1400,
+  roof_style_leanto:            800,
 
   // Roof finish add-ons (epdm = 0, not stored)
   roof_finish_shingle_grey:     400,
@@ -105,6 +106,9 @@ const PRICING_DEFAULTS = {
   decking_balustrade_picket_lm:  85, // PLACEHOLDER
   decking_balustrade_frameless_lm: 220, // PLACEHOLDER
 
+  // Veranda
+  veranda_per_sqm:              200, // PLACEHOLDER
+
   // Structure type (freestanding = 0, not stored)
   structure_partial:              0, // PLACEHOLDER
   structure_attached:             0, // PLACEHOLDER
@@ -151,7 +155,7 @@ const PRICING = Object.assign({}, PRICING_DEFAULTS, PRICING_SAVED);
 // ─── DISPLAY LABELS (not in PRICING — cosmetic only, not admin-editable) ───────
 
 const ROOF_STYLE_LABELS = {
-  flat: 'Flat Roof', apex: 'Apex Roof',
+  flat: 'Flat Roof', apex: 'Apex Roof', leanto: 'Lean-To Roof',
 };
 
 const ROOF_FINISH_LABELS = {
@@ -480,6 +484,12 @@ function calcTotal(state) {
   total += calcDecking(state).total;
   total += calcInterior(state).total;
   total += calcFurniture(state).total;
+
+  // Veranda
+  if (state.veranda && state.veranda.enabled) {
+    const vArea = state.width * (state.veranda.depth ?? 2.0);
+    total += Math.round(vArea * PRICING.veranda_per_sqm);
+  }
 
   return total;
 }

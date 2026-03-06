@@ -375,22 +375,30 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
   padding: 1px 5px; font-family: inherit; font-size: 11px;
 }
 
-.viewport-controls {
-  position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
-  display: flex; gap: 4px;
-  background: rgba(255,255,255,0.90); backdrop-filter: blur(10px);
-  padding: 6px 10px; border-radius: 24px;
-  border: 1px solid rgba(255,255,255,0.55);
+/* ── Viewport toolbar ────────────────────────────────────────────────────────── */
+
+.viewport-toolbar {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 2px;
+  background: rgba(255,255,255,0.92); backdrop-filter: blur(10px);
+  padding: 4px 8px; border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.08);
   box-shadow: var(--shadow-md);
+  z-index: 10;
 }
-.ctrl-btn {
+.tb-btn {
   background: none; border: none; cursor: pointer;
-  font-size: 12px; color: var(--muted);
-  padding: 5px 12px; border-radius: 16px;
+  width: 32px; height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; color: var(--text);
   transition: all 0.15s;
-  font-family: 'DM Sans', sans-serif; font-weight: 500;
 }
-.ctrl-btn:hover { background: var(--accent-light); color: var(--accent-dark); }
+.tb-btn:hover:not(:disabled) { background: var(--accent-light); color: var(--accent-dark); }
+.tb-btn:disabled { opacity: 0.3; cursor: default; }
+.tb-btn.active { background: var(--accent); color: #fff; }
+.tb-sep {
+  width: 1px; height: 20px; background: var(--border); margin: 0 4px;
+}
 
 /* ── Specs bar ───────────────────────────────────────────────────────────────── */
 
@@ -602,7 +610,9 @@ input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
   .tab-btn { min-width: 56px; padding: 0 8px; font-size: 9px; }
   .tab-icon { font-size: 16px; }
 
-  .viewport-controls { bottom: 90px; }
+  .viewport-toolbar { top: 6px; padding: 3px 5px; gap: 1px; }
+  .tb-btn { width: 28px; height: 28px; }
+  .tb-sep { height: 16px; margin: 0 2px; }
 
   .specs-bar { top: 8px; right: 8px; padding: 9px 11px; min-width: 130px; }
   .specs-bar h3 { margin-bottom: 6px; }

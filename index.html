@@ -37,6 +37,43 @@
     <canvas id="canvas"></canvas>
     <div class="view-hint">Drag to orbit · <kbd>Shift</kbd>+drag to pan · Scroll to zoom · Drag arrows to resize</div>
 
+    <!-- Viewport toolbar -->
+    <div class="viewport-toolbar">
+      <button class="tb-btn" id="tbUndo" onclick="undoState()" title="Undo (Ctrl+Z)" disabled>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10h13a4 4 0 010 8H7"/><path d="M3 10l5-5M3 10l5 5"/></svg>
+      </button>
+      <button class="tb-btn" id="tbRedo" onclick="redoState()" title="Redo (Ctrl+Shift+Z)" disabled>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10H8a4 4 0 000 8h9"/><path d="M21 10l-5-5M21 10l-5 5"/></svg>
+      </button>
+      <span class="tb-sep"></span>
+      <button class="tb-btn" id="tbFlip" onclick="flipDesign()" title="Flip / Mirror">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18"/><path d="M8 7H4l4 10H4"/><path d="M16 7h4l-4 10h4"/></svg>
+      </button>
+      <button class="tb-btn" id="tbInterior" onclick="toggleInteriorView()" title="Interior / Exterior view">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 3v18"/></svg>
+      </button>
+      <button class="tb-btn" id="tbFloorplan" onclick="toggleFloorplanView()" title="Floorplan view">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M3 12h8v9M14 3v9h7"/></svg>
+      </button>
+      <span class="tb-sep"></span>
+      <button class="tb-btn" id="tbUnits" onclick="toggleUnits()" title="Toggle units (m / ft)">
+        <span style="font-size:12px;font-weight:600" id="unitsLabel">m</span>
+      </button>
+      <span class="tb-sep"></span>
+      <button class="tb-btn" onclick="setViewPreset('front')" title="Front view">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>
+      </button>
+      <button class="tb-btn" onclick="setViewPreset('side')" title="Side view">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 18V6l8-3v18"/><path d="M12 3l8 3v12l-8 3"/></svg>
+      </button>
+      <button class="tb-btn" onclick="setViewPreset('top')" title="Top view">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 5v-2M12 21v-2M5 12H3M21 12h-2"/></svg>
+      </button>
+      <button class="tb-btn" onclick="setViewPreset('isometric')" title="Isometric view">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+      </button>
+    </div>
+
     <div class="specs-bar">
       <h3>Specifications</h3>
       <div class="spec-row"><span>Width</span>  <span id="spec-width">5.0m</span></div>
@@ -45,13 +82,6 @@
       <div class="spec-row"><span>Floor Area</span><span id="spec-area">20.0m²</span></div>
       <div class="spec-row"><span>Roof</span>   <span id="spec-roof">Apex</span></div>
       <div class="spec-row"><span>Foundation</span><span id="spec-found">Concrete</span></div>
-    </div>
-
-    <div class="viewport-controls">
-      <button class="ctrl-btn" onclick="setViewPreset('front')">Front</button>
-      <button class="ctrl-btn" onclick="setViewPreset('side')">Side</button>
-      <button class="ctrl-btn" onclick="setViewPreset('top')">Top</button>
-      <button class="ctrl-btn" onclick="setViewPreset('isometric')">Isometric</button>
     </div>
   </div>
 </div>
@@ -103,9 +133,47 @@
       </div>
     </div>
 
-    <!-- Resize hint -->
+    <!-- Dimensions -->
     <div class="section">
-      <p class="helper-text" style="margin:0">Drag the yellow arrows on the 3D model to resize width and depth. Height can be adjusted similarly.</p>
+      <div class="section-title">Dimensions</div>
+      <div class="dim-row">
+        <span class="dim-label">Width</span>
+        <input type="range" id="widthSlider" min="2" max="10" step="0.25" value="5.0"
+               oninput="setDimension('width', this.value)">
+        <span class="dim-value" id="widthVal">5.0m</span>
+      </div>
+      <div class="dim-row">
+        <span class="dim-label">Depth</span>
+        <input type="range" id="depthSlider" min="2" max="8" step="0.25" value="4.0"
+               oninput="setDimension('depth', this.value)">
+        <span class="dim-value" id="depthVal">4.0m</span>
+      </div>
+      <div class="dim-row">
+        <span class="dim-label">Height</span>
+        <input type="range" id="heightSlider" min="2.2" max="3.5" step="0.1" value="2.7"
+               oninput="setDimension('height', this.value)">
+        <span class="dim-value" id="heightVal">2.7m</span>
+      </div>
+      <p class="helper-text" style="margin:6px 0 0 0;font-size:11px">Or drag the arrows on the 3D model.</p>
+    </div>
+
+    <!-- Scene Environment -->
+    <div class="section">
+      <div class="section-title">Scene</div>
+      <div class="option-grid">
+        <button class="option-btn active" onclick="selectScene('grass',this)">
+          <span class="opt-icon">&#127807;</span>Grass
+        </button>
+        <button class="option-btn" onclick="selectScene('patio',this)">
+          <span class="opt-icon">&#129521;</span>Patio
+        </button>
+        <button class="option-btn" onclick="selectScene('gravel',this)">
+          <span class="opt-icon">&#11036;</span>Gravel
+        </button>
+        <button class="option-btn" onclick="selectScene('sand',this)">
+          <span class="opt-icon">&#127958;</span>Sand
+        </button>
+      </div>
     </div>
 
   </div><!-- /tab-style -->
@@ -120,9 +188,13 @@
           <span class="opt-icon">&#9644;</span>Flat
           <div class="opt-price">Included</div>
         </button>
-        <button class="option-btn active" id="roofBtn-apex" onclick="selectOpt('roof','apex',this);showFlatTilt(false)">
+        <button class="option-btn active" id="roofBtn-apex" onclick="selectOpt('roof','apex',this);showFlatTilt()">
           <span class="opt-icon">&#9650;</span>Apex
           <div class="opt-price">+£1,400</div>
+        </button>
+        <button class="option-btn" id="roofBtn-leanto" onclick="selectOpt('roof','leanto',this);showFlatTilt()">
+          <span class="opt-icon">&#9699;</span>Lean-To
+          <div class="opt-price">+£800</div>
         </button>
       </div>
 
@@ -134,6 +206,16 @@
           <input type="range" id="roofTiltSlider" min="0" max="8" step="1" value="2"
                  oninput="setRoofTilt(this.value)">
           <span class="dim-value" id="roofTiltVal" style="width:36px">2°</span>
+        </div>
+      </div>
+      <!-- Apex roof pitch -->
+      <div id="apexPitchSection" style="margin-top:12px">
+        <div class="section-title" style="margin-bottom:6px">Ridge Height</div>
+        <div class="dim-row">
+          <span class="dim-label" style="width:60px">Height</span>
+          <input type="range" id="apexPitchSlider" min="0.5" max="1.8" step="0.1" value="1.0"
+                 oninput="setApexPitch(this.value)">
+          <span class="dim-value" id="apexPitchVal" style="width:40px">1.0m</span>
         </div>
       </div>
     </div>
@@ -284,6 +366,17 @@
         </div>
       </div>
 
+      <!-- Window sill height -->
+      <div class="section" style="margin-top:10px">
+        <div class="section-title" style="margin-bottom:6px">Window Height Offset</div>
+        <div class="dim-row">
+          <span class="dim-label" style="width:60px">Sill</span>
+          <input type="range" id="windowSillSlider" min="-0.3" max="0.3" step="0.05" value="0"
+                 oninput="setWindowSill(this.value)">
+          <span class="dim-value" id="windowSillVal" style="width:44px">0m</span>
+        </div>
+      </div>
+
       <!-- Placement hint -->
       <p class="palette-hint" id="paletteHint" style="display:none">
         Click any wall to place · Drag handles to move · Right-click to delete
@@ -425,6 +518,18 @@
         <div class="swatch"        style="background:#f0eeeb;border-color:#ccc"          onclick="selectHandleColour('white',this)"  title="White"></div>
         <div class="swatch"        style="background:#d4af37"                            onclick="selectHandleColour('gold',this)"   title="Gold"></div>
         <div class="swatch"        style="background:#c0c0c0"                            onclick="selectHandleColour('chrome',this)" title="Chrome"></div>
+      </div>
+    </div>
+
+    <!-- Guttering -->
+    <div class="section">
+      <div class="section-title">Guttering &amp; Downpipes</div>
+      <div class="swatch-grid" id="gutterSwatches">
+        <div class="swatch active" style="background:#1a1a1a"        onclick="selectGutterColour('#1a1a1a',this)" title="Black"></div>
+        <div class="swatch"        style="background:#4a4a4a"        onclick="selectGutterColour('#4a4a4a',this)" title="Anthracite"></div>
+        <div class="swatch"        style="background:#7a7a7a"        onclick="selectGutterColour('#7a7a7a',this)" title="Grey"></div>
+        <div class="swatch"        style="background:#f0eeeb;border-color:#ccc" onclick="selectGutterColour('#f0eeeb',this)" title="White"></div>
+        <div class="swatch"        style="background:#5c3a1e"        onclick="selectGutterColour('#5c3a1e',this)" title="Brown"></div>
       </div>
     </div>
 
@@ -625,6 +730,26 @@
             <button class="option-btn active" onclick="selectDeckingBalustradeFinish('black',this)">Black</button>
             <button class="option-btn" onclick="selectDeckingBalustradeFinish('natural_oak',this)">Natural Oak</button>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Veranda / Canopy -->
+    <div class="section">
+      <div class="section-title">Veranda / Canopy</div>
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-name">Add Veranda</div>
+          <div class="toggle-price">From £200/m² (TBC)</div>
+        </div>
+        <button class="toggle" id="toggle-veranda" onclick="toggleVeranda(this)"></button>
+      </div>
+      <div id="verandaSection" style="display:none;margin-top:10px">
+        <div class="dim-row">
+          <span class="dim-label" style="width:60px">Depth</span>
+          <input type="range" id="verandaDepthSlider" min="1" max="4" step="0.25" value="2.0"
+                 oninput="setVerandaDepth(this.value)">
+          <span class="dim-value" id="verandaDepthVal" style="width:40px">2.0m</span>
         </div>
       </div>
     </div>

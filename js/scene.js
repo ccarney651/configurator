@@ -32,13 +32,53 @@ const fillLight = new THREE.DirectionalLight(0xd0e8ff, 0.35);
 fillLight.position.set(-5, 3, -5);
 scene.add(fillLight);
 
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshLambertMaterial({ color: 0x2a6016 }));
+// Radial gradient ground — green centre fading to fog colour at edges
+function createGroundTexture(centerColor, edgeColor) {
+  const size = 1024;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(size/2, size/2, size*0.05, size/2, size/2, size*0.50);
+  grad.addColorStop(0,    centerColor);
+  grad.addColorStop(0.45, centerColor);
+  grad.addColorStop(0.75, edgeColor);
+  grad.addColorStop(1,    edgeColor);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.encoding = THREE.sRGBEncoding;
+  return tex;
+}
+
+const GROUND_PRESETS = {
+  grass:  { center: '#4a9a2a', edge: '#c8dbc0', fog: 0xd5e6d0 },
+  patio:  { center: '#9a9080', edge: '#d0ccc4', fog: 0xd0ccc4 },
+  gravel: { center: '#8a8478', edge: '#ccc8c0', fog: 0xccc8c0 },
+  sand:   { center: '#c4ae6c', edge: '#e0d8c8', fog: 0xe0d8c8 },
+};
+
+const groundTex = createGroundTexture('#4a9a2a', '#c8dbc0');
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(50, 50),
+  new THREE.MeshLambertMaterial({ map: groundTex })
+);
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
+function setGroundType(type) {
+  state.groundType = type;
+  const p = GROUND_PRESETS[type] || GROUND_PRESETS.grass;
+  const tex = createGroundTexture(p.center, p.edge);
+  ground.material.map = tex;
+  ground.material.needsUpdate = true;
+  scene.fog = new THREE.FogExp2(p.fog, 0.012);
+  // Update sky horizon to match
+  skyDome.material.uniforms.uHorizon.value.setHex(p.fog);
+}
+
 const grid = new THREE.GridHelper(24, 24, 0x5a9a50, 0x5a9a50);
-grid.material.opacity = 0.2; grid.material.transparent = true;
+grid.material.opacity = 0.08; grid.material.transparent = true;
 scene.add(grid);
 
 const buildingGroup = new THREE.Group();
@@ -51,8 +91,8 @@ const skyDome = new THREE.Mesh(
   new THREE.SphereGeometry(80, 32, 16),
   new THREE.ShaderMaterial({
     uniforms: {
-      uTop:     { value: new THREE.Color(0x0e6ba8) },
-      uHorizon: { value: new THREE.Color(0xc8e3f5) },
+      uTop:     { value: new THREE.Color(0x4a90c4) },
+      uHorizon: { value: new THREE.Color(0xd5e6d0) },
     },
     vertexShader: `
       varying float vY;
@@ -75,7 +115,7 @@ const skyDome = new THREE.Mesh(
   })
 );
 scene.add(skyDome);
-scene.fog = new THREE.FogExp2(0xb8d8f0, 0.006);
+scene.fog = new THREE.FogExp2(0xd5e6d0, 0.012);
 
 // ─── WALL DIMENSION ARROWS ────────────────────────────────────────────────────
 const wallArrowGroup = new THREE.Group();
@@ -119,6 +159,15 @@ const slabMat  = new THREE.MeshLambertMaterial({ color: 0xccccbb });
 const floorMat = new THREE.MeshLambertMaterial({ color: 0xc8a87a });
 const deckMat  = new THREE.MeshLambertMaterial({ color: 0x7a5210 });
 const boardMat = new THREE.MeshLambertMaterial({ color: 0x6b4810 });
+
+// Interior colour maps
+const INTERIOR_FLOOR_COLORS = {
+  oak: 0xc8a87a, walnut: 0x5c3a21, farm_oak: 0xb89a65, tiles: 0xd0cfc8,
+  polished_concrete: 0x9e9e9e, gym_black: 0x2a2a2a, white_marble: 0xe8e4de, rubber: 0x3a3a3a,
+};
+const INTERIOR_WALL_COLORS = {
+  white: 0xf5f5f5, charcoal: 0x3a3a3a, plywood: 0xc4a46a, oak: 0xb48a52, tongue_groove: 0xd4b87a,
+};
 
 const HANDLE_DOOR_COLOR  = 0xf59e0b;
 const HANDLE_WIN_COLOR   = 0x38bdf8;
@@ -203,7 +252,8 @@ function openingH(op) {
   return op.type === 'door' ? DOOR_H : WINDOW_MODEL[op.style].naturalH;
 }
 function openingSill(op) {
-  return op.type === 'door' ? 0 : WINDOW_MODEL[op.style].sill;
+  if (op.type === 'door') return 0;
+  return WINDOW_MODEL[op.style].sill + (state.windowSillAdjust ?? 0);
 }
 
 function clampOffset(offset, wallW, ow) {
@@ -339,36 +389,30 @@ function getWallPanels(wallW, wallH, descriptors) {
 
 // Triangular wedge panel that fills the slanted top of left/right walls under tilted flat roof
 // minH = back (low) wall height, maxH = front (high) wall height
-function addSideWedge(wallId, minH, maxH, mat, hw, hd) {
+function addSideWedge(wallId, minH, maxH, mat, hw, hd, highAtBack) {
   const x   = wallId === 'left' ? -hw : hw;
-  const xIn = wallId === 'left' ? -hw + TK : hw - TK; // inner face offset
+  const xIn = wallId === 'left' ? -hw + TK : hw - TK;
   const yBase = 0.18 + minH;
   const yTop  = 0.18 + maxH;
-  // Wedge runs z: -hd (back/low) → +hd (front/high)
-  // Two outer tris + two inner tris + three connecting quads
+  // highZ = z-coord of the tall end, lowZ = z-coord of the short end
+  const highZ = highAtBack ? -hd : hd;
+  const lowZ  = highAtBack ? hd : -hd;
   const geo = new THREE.BufferGeometry();
   const v = new Float32Array([
-    // outer face (4 verts, CW looking outward)
-    x, yBase, -hd,   // 0 back-low
-    x, yBase,  hd,   // 1 front-low
-    x, yTop,   hd,   // 2 front-high
-    // inner face
-    xIn, yBase, -hd, // 3 back-low
-    xIn, yBase,  hd, // 4 front-low
-    xIn, yTop,   hd, // 5 front-high
+    x, yBase, lowZ,     // 0 low-end bottom
+    x, yBase, highZ,    // 1 high-end bottom
+    x, yTop,  highZ,    // 2 high-end top
+    xIn, yBase, lowZ,   // 3 low-end bottom inner
+    xIn, yBase, highZ,  // 4 high-end bottom inner
+    xIn, yTop,  highZ,  // 5 high-end top inner
   ]);
   geo.setAttribute('position', new THREE.BufferAttribute(v, 3));
   geo.setIndex([
-    // outer tri
-    0,2,1,
-    // inner tri
-    3,4,5,
-    // bottom quad (back-low → front-low)
-    0,1,4, 0,4,3,
-    // front quad (vertical face at +hd)
-    1,2,5, 1,5,4,
-    // hypotenuse slant (back at yBase → front at yTop)
-    0,3,5, 0,5,2,
+    0,2,1,       // outer tri
+    3,4,5,       // inner tri
+    0,1,4, 0,4,3, // bottom quad
+    1,2,5, 1,5,4, // vertical face at high end
+    0,3,5, 0,5,2, // hypotenuse slant
   ]);
   geo.computeVertexNormals();
   const m = new THREE.Mesh(geo, mat);
@@ -379,12 +423,29 @@ function addSideWedge(wallId, minH, maxH, mat, hw, hd) {
 function buildWallFace(wallId, wallW, wallH, descriptors, wallMat, hw, hd) {
   const isLR = wallId === 'left' || wallId === 'right';
 
+  // Interior wall material (passed via closure from buildRoom)
+  const iwCol = INTERIOR_WALL_COLORS[state.interiorWalls] ?? 0xf5f5f5;
+  const iwMat = new THREE.MeshLambertMaterial({ color: iwCol });
+
   getWallPanels(wallW, wallH, descriptors).forEach(({ cx, cy, w, h }) => {
     const { x, y, z } = localToWorld(wallId, cx, cy, hw, hd);
+    // Exterior face
     const geo = isLR ? new THREE.BoxGeometry(TK, h, w) : new THREE.BoxGeometry(w, h, TK);
     const m = new THREE.Mesh(geo, wallMat);
     m.position.set(x, y, z); m.castShadow = m.receiveShadow = true;
+    m.userData.wallId = wallId;
     buildingGroup.add(m);
+    // Interior face (thin panel offset inward)
+    const iTK = 0.01;
+    const iGeo = isLR ? new THREE.BoxGeometry(iTK, h, w) : new THREE.BoxGeometry(w, h, iTK);
+    const im = new THREE.Mesh(iGeo, iwMat);
+    const inset = TK/2 + iTK/2;
+    if (wallId === 'front')      im.position.set(x, y, z - inset);
+    else if (wallId === 'back')  im.position.set(x, y, z + inset);
+    else if (wallId === 'left')  im.position.set(x + inset, y, z);
+    else                         im.position.set(x - inset, y, z);
+    im.userData.isInterior = true;
+    buildingGroup.add(im);
   });
 
   descriptors.forEach(desc => {
@@ -438,8 +499,8 @@ function placeWindowGLB(wallId, worldCentre, oh, ow, style, hw, hd) {
 
 function buildRoof(w, d, h, hw, hd) {
   const roofY = 0.18 + h, ov = 0.3, panelD = d + ov * 2, rMat = makeRoofMat(), pT = 0.1;
-  const rp = (W, D, x, y, z, rz=0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(W, pT, D), rMat); m.position.set(x,y,z); m.rotation.z=rz; m.castShadow=true; buildingGroup.add(m); };
-  const fa = (W, H, D, x, y, z)    => { const m = new THREE.Mesh(new THREE.BoxGeometry(W, H, D), getFrameMat()); m.position.set(x,y,z); buildingGroup.add(m); };
+  const rp = (W, D, x, y, z, rz=0) => { const m = new THREE.Mesh(new THREE.BoxGeometry(W, pT, D), rMat); m.position.set(x,y,z); m.rotation.z=rz; m.castShadow=true; m.userData.isRoof=true; buildingGroup.add(m); };
+  const fa = (W, H, D, x, y, z)    => { const m = new THREE.Mesh(new THREE.BoxGeometry(W, H, D), getFrameMat()); m.position.set(x,y,z); m.userData.isRoof=true; buildingGroup.add(m); };
 
   if (state.roof === 'flat') {
     const tiltRad = ((state.roofTilt || 0) * Math.PI) / 180;
@@ -491,7 +552,7 @@ function buildRoof(w, d, h, hw, hd) {
     }
   } else if (state.roof === 'apex') {
     // Ridge runs along X axis; slopes pitch toward front (+Z) and back (-Z)
-    const rh=1.0, spanZ=hd+ov, spanW=w+ov*2;
+    const rh=state.apexPitch??1.0, spanZ=hd+ov, spanW=w+ov*2;
     const slopeLen=Math.sqrt(spanZ*spanZ+rh*rh), angle=Math.atan2(rh,spanZ);
 
     // ── Front slope panel ──
@@ -529,6 +590,49 @@ function buildRoof(w, d, h, hw, hd) {
     const fH=0.20, eY=roofY;
     fa(spanW+0.06,fH,0.07, 0,eY-fH/2+0.02, +(hd+ov));
     fa(spanW+0.06,fH,0.07, 0,eY-fH/2+0.02, -(hd+ov));
+
+  } else if (state.roof === 'leanto') {
+    // Lean-to: single slope from back (high) to front (low)
+    const rh = 0.8;  // rise from front eave to back ridge
+    const spanZ = hd + ov;
+    const spanW = w + ov * 2;
+    const slopeLen = Math.sqrt((2*spanZ)*(2*spanZ) + rh*rh);
+    const angle = Math.atan2(rh, 2*spanZ);
+
+    // Slope panel — centred, tilted so back is high and front is low
+    const sp = new THREE.Mesh(new THREE.BoxGeometry(spanW, pT, slopeLen), rMat);
+    sp.position.set(0, roofY + rh/2, 0);
+    sp.rotation.x = angle;
+    sp.castShadow = true;
+    buildingGroup.add(sp);
+
+    // Ridge beam at back (high side)
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(spanW + 0.1, 0.10, 0.10), getFrameMat());
+    ridge.position.set(0, roofY + rh + pT/2, -(hd + ov));
+    buildingGroup.add(ridge);
+
+    // Front fascia (low side)
+    const fH = 0.20;
+    fa(spanW + 0.06, fH, 0.07, 0, roofY - fH/2 + 0.02, hd + ov);
+    // Back fascia (high side)
+    fa(spanW + 0.06, fH, 0.07, 0, roofY + rh - fH/2 + 0.02, -(hd + ov));
+
+    // Gable end fills (triangles on left/right walls)
+    const gMat = makeWallMat(w, h);
+    [-hw, hw].forEach(x => {
+      const geo = new THREE.BufferGeometry();
+      const verts = new Float32Array([
+        x, roofY,     +(hd+ov),   // front-low
+        x, roofY,     -(hd+ov),   // back-low (same height as front)
+        x, roofY+rh,  -(hd+ov),   // back-high
+      ]);
+      geo.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+      geo.setIndex([0,2,1, 0,1,2]);
+      geo.computeVertexNormals();
+      const g = new THREE.Mesh(geo, gMat);
+      g.castShadow = true;
+      buildingGroup.add(g);
+    });
   }
 
   // ── Guttering ──────────────────────────────────────────────────────────────
@@ -536,7 +640,7 @@ function buildRoof(w, d, h, hw, hd) {
 }
 
 function buildGuttering(w, d, h, hw, hd, ov) {
-  const gutMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+  const gutMat = new THREE.MeshLambertMaterial({ color: state.gutterColour ?? 0x1a1a1a });
   const gutH = 0.09, gutD = 0.10, pipeR = 0.035;
 
   // Box is long along LOCAL X (span), shallow profile in Y (height) and Z (depth).
@@ -584,6 +688,17 @@ function buildGuttering(w, d, h, hw, hd, ov) {
     // Downpipes at back-left and back-right corners
     downpipe(-(hw + ov), -(hd + ov + gutD/2), eaveY);
     downpipe(  hw + ov,  -(hd + ov + gutD/2), eaveY);
+
+  } else if (state.roof === 'leanto') {
+    const rh = 0.8;
+    const eaveYFront = 0.18 + h;          // low side
+    const eaveYBack  = 0.18 + h + rh;     // high side
+    // Front gutter (low — drain side)
+    gutter(w + ov*2, 0, eaveYFront - gutH/2, hd + ov + gutD/2);
+    // Back gutter (high side)
+    gutter(w + ov*2, 0, eaveYBack - gutH/2, -(hd + ov + gutD/2));
+    // Downpipe at front-right corner (drain side)
+    downpipe(hw + ov, hd + ov + gutD/2, eaveYFront);
   }
 }
 
@@ -596,23 +711,40 @@ function buildRoom() {
 
   box(w+0.3,0.12,d+0.3,0,0.06,0,slabMat); box(w,0.06,d,0,0.15,0,floorMat);
 
+  // Interior floor surface
+  const intFloorCol = INTERIOR_FLOOR_COLORS[state.interiorFloor] ?? 0xc8a87a;
+  const intFloorMat = new THREE.MeshLambertMaterial({ color: intFloorCol });
+  box(w-0.02, 0.005, d-0.02, 0, 0.185, 0, intFloorMat);
+
+  // Interior wall surfaces (thin inner faces)
+  const intWallCol = INTERIOR_WALL_COLORS[state.interiorWalls] ?? 0xf5f5f5;
+  const intWallMat = new THREE.MeshLambertMaterial({ color: intWallCol, side: THREE.FrontSide });
+
   const wallOps = { front:[], back:[], left:[], right:[] };
   state.openings.forEach(op => wallOps[op.wall].push(opToDescriptor(op)));
 
-  // Flat roof tilt: front wall (+Z) is HIGH, back wall (-Z) is LOW
-  const flatTiltRad   = (state.roof==='flat') ? ((state.roofTilt||0)*Math.PI/180) : 0;
-  const wallTiltRise  = Math.tan(flatTiltRad) * hd;   // rise at wall face z=±hd
-  const frontH = h + wallTiltRise;
-  const backH  = h - wallTiltRise;
+  // Wall height variations by roof type
+  let frontH = h, backH = h;
+  if (state.roof === 'flat') {
+    const flatTiltRad  = ((state.roofTilt||0)*Math.PI/180);
+    const wallTiltRise = Math.tan(flatTiltRad) * hd;
+    frontH = h + wallTiltRise;
+    backH  = h - wallTiltRise;
+  } else if (state.roof === 'leanto') {
+    frontH = h;
+    backH  = h + 0.8;  // back wall taller for lean-to rise
+  }
 
   buildWallFace('front', w, frontH, wallOps.front, wallMat, hw, hd);
   buildWallFace('back',  w, backH,  wallOps.back,  wallMat, hw, hd);
-  // Side walls: rectangle up to backH, plus triangle wedge on top if tilted
-  buildWallFace('left',  d, backH, wallOps.left,  wallMat, hw, hd);
-  buildWallFace('right', d, backH, wallOps.right, wallMat, hw, hd);
-  if (wallTiltRise > 0.005) {
-    addSideWedge('left',  backH, frontH, wallMat, hw, hd);
-    addSideWedge('right', backH, frontH, wallMat, hw, hd);
+  // Side walls: rectangle up to shorter height, plus triangle wedge on top if needed
+  const sideBaseH = Math.min(frontH, backH);
+  buildWallFace('left',  d, sideBaseH, wallOps.left,  wallMat, hw, hd);
+  buildWallFace('right', d, sideBaseH, wallOps.right, wallMat, hw, hd);
+  if (Math.abs(frontH - backH) > 0.005) {
+    const highAtBack = backH > frontH;
+    addSideWedge('left',  sideBaseH, Math.max(frontH, backH), wallMat, hw, hd, highAtBack);
+    addSideWedge('right', sideBaseH, Math.max(frontH, backH), wallMat, hw, hd, highAtBack);
   }
 
   // Corner posts — variable height per corner
@@ -621,14 +753,147 @@ function buildRoom() {
 
   buildRoof(w,d,h,hw,hd);
 
-  if (state.extras.decking && state.deckingArea>0) {
-    const da=state.deckingArea,dw=Math.min(w*1.5,Math.sqrt(da*(w/Math.max(w,3))*2)),dd=da/dw;
-    box(dw,0.07,dd,0,0.18,hd+dd/2+0.02,deckMat);
-    for(let i=0;i<Math.floor(dd/0.14);i++) box(dw,0.015,0.11,0,0.22,hd+i*0.14+0.09,boardMat);
+  if (state.extras.decking && state.deckingArea > 0) {
+    const da = state.deckingArea;
+    const dw = Math.min(w * 1.5, Math.sqrt(da * (w / Math.max(w, 3)) * 2));
+    const dd = da / dw;
+    const deckCol = { softwood: 0x7a5210, hardwood: 0x5a3a10, composite: 0x6b6055 }[state.deckingMaterial] || 0x7a5210;
+    const dMat = new THREE.MeshLambertMaterial({ color: deckCol });
+    const dBoardMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(deckCol).multiplyScalar(0.85) });
+
+    // Deck platform
+    box(dw, 0.07, dd, 0, 0.18, hd + dd/2 + 0.02, dMat);
+    // Board lines
+    const plankW = 0.12, gap = 0.02;
+    for (let i = 0; i < Math.floor(dd / (plankW + gap)); i++) {
+      box(dw, 0.015, plankW, 0, 0.22, hd + i * (plankW + gap) + plankW/2 + 0.04, dBoardMat);
+    }
+
+    // Balustrade
+    const bType = state.deckingBalustrade;
+    if (bType && bType !== 'none') {
+      const postH = 0.9, railY = 0.18 + postH;
+      const fMat = getFrameMat();
+      const deckZ0 = hd + 0.02;
+      const deckZ1 = hd + dd + 0.02;
+      const deckX0 = -dw/2, deckX1 = dw/2;
+
+      // Posts at corners and every ~1m
+      const postPositions = [];
+      // Front edge (far from building)
+      for (let x = deckX0; x <= deckX1 + 0.01; x += Math.min(1.0, dw)) {
+        postPositions.push([x, deckZ1]);
+      }
+      // Side edges
+      for (let z = deckZ0 + 1.0; z < deckZ1; z += 1.0) {
+        postPositions.push([deckX0, z]);
+        postPositions.push([deckX1, z]);
+      }
+
+      postPositions.forEach(([px, pz]) => {
+        box(0.05, postH, 0.05, px, 0.18 + postH/2, pz, fMat);
+      });
+
+      // Top rails
+      box(dw, 0.04, 0.05, 0, railY, deckZ1, fMat); // front rail
+      box(0.05, 0.04, dd, deckX0, railY, hd + dd/2 + 0.02, fMat); // left rail
+      box(0.05, 0.04, dd, deckX1, railY, hd + dd/2 + 0.02, fMat); // right rail
+
+      // Fill between posts
+      if (bType === 'glass' || bType === 'frameless') {
+        const gMat = new THREE.MeshPhongMaterial({ color: 0xa8d8ea, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false });
+        box(dw, postH * 0.8, 0.01, 0, 0.18 + postH * 0.45, deckZ1, gMat); // front
+        box(0.01, postH * 0.8, dd, deckX0, 0.18 + postH * 0.45, hd + dd/2 + 0.02, gMat); // left
+        box(0.01, postH * 0.8, dd, deckX1, 0.18 + postH * 0.45, hd + dd/2 + 0.02, gMat); // right
+      } else if (bType === 'picket') {
+        // Pickets every 0.1m
+        for (let x = deckX0 + 0.1; x < deckX1; x += 0.1) {
+          box(0.025, postH * 0.75, 0.025, x, 0.18 + postH * 0.4, deckZ1, fMat);
+        }
+        for (let z = deckZ0 + 0.1; z < deckZ1; z += 0.1) {
+          box(0.025, postH * 0.75, 0.025, deckX0, 0.18 + postH * 0.4, z, fMat);
+          box(0.025, postH * 0.75, 0.025, deckX1, 0.18 + postH * 0.4, z, fMat);
+        }
+      }
+    }
+  }
+
+  // Veranda / canopy
+  if (state.veranda && state.veranda.enabled) {
+    const vd = state.veranda.depth ?? 2.0;
+    const verandaH = Math.min(frontH, backH);
+    const vRoofY = 0.18 + verandaH - 0.05; // slightly below eave
+    const vMat = getFrameMat();
+
+    // Posts at front corners
+    box(0.1, verandaH, 0.1, -hw, 0.18 + verandaH/2, hd + vd, vMat);
+    box(0.1, verandaH, 0.1,  hw, 0.18 + verandaH/2, hd + vd, vMat);
+    // Intermediate posts every ~2m
+    const postSpacing = 2.0;
+    for (let x = -hw + postSpacing; x < hw - 0.1; x += postSpacing) {
+      box(0.1, verandaH, 0.1, x, 0.18 + verandaH/2, hd + vd, vMat);
+    }
+    // Front beam
+    box(w + 0.2, 0.12, 0.12, 0, vRoofY + 0.06, hd + vd, vMat);
+    // Side beams
+    box(0.1, 0.12, vd, -hw, vRoofY + 0.06, hd + vd/2, vMat);
+    box(0.1, 0.12, vd,  hw, vRoofY + 0.06, hd + vd/2, vMat);
+    // Roof panel (slight downward tilt for drainage)
+    const vRoofMat = makeRoofMat();
+    const vrp = new THREE.Mesh(new THREE.BoxGeometry(w + 0.4, 0.06, vd + 0.3), vRoofMat);
+    vrp.position.set(0, vRoofY + 0.12, hd + vd/2);
+    vrp.rotation.x = 0.03; // slight tilt for drainage
+    vrp.castShadow = true;
+    vrp.userData.isRoof = true;
+    buildingGroup.add(vrp);
   }
 
   rebuildHandles();
   rebuildWallArrows();
+  if (interiorViewMode) applyInteriorView();
+}
+
+// ─── INTERIOR VIEW MODE ─────────────────────────────────────────────────────────
+
+let interiorViewMode = false;
+
+function toggleInteriorView() {
+  interiorViewMode = !interiorViewMode;
+  const btn = document.getElementById('tbInterior');
+  if (btn) btn.classList.toggle('active', interiorViewMode);
+  if (interiorViewMode) {
+    applyInteriorView();
+  } else {
+    restoreExteriorView();
+  }
+}
+
+function applyInteriorView() {
+  buildingGroup.traverse(child => {
+    if (!child.isMesh) return;
+    // Hide front wall panels and roof panels
+    if (child.userData.wallId === 'front' || child.userData.isRoof) {
+      child.userData._savedVisible = child.visible;
+      child.userData._savedMat = child.material;
+      child.visible = true;
+      child.material = child.material.clone();
+      child.material.transparent = true;
+      child.material.opacity = 0.12;
+      child.material.depthWrite = false;
+    }
+  });
+}
+
+function restoreExteriorView() {
+  buildingGroup.traverse(child => {
+    if (!child.isMesh) return;
+    if (child.userData._savedMat) {
+      child.material.dispose();
+      child.material = child.userData._savedMat;
+      delete child.userData._savedMat;
+      delete child.userData._savedVisible;
+    }
+  });
 }
 
 // ─── HANDLES ───────────────────────────────────────────────────────────────────
@@ -1128,6 +1393,7 @@ window.addEventListener('mousemove', e => {
     }
     buildRoom();
     if (typeof updatePriceDisplay === 'function') updatePriceDisplay();
+    if (typeof syncDimSliders === 'function') syncDimSliders();
     return;
   }
 
@@ -1352,6 +1618,7 @@ canvas.addEventListener('touchmove', e => {
     }
     buildRoom();
     if (typeof updatePriceDisplay === 'function') updatePriceDisplay();
+    if (typeof syncDimSliders === 'function') syncDimSliders();
     return;
   }
 
@@ -1391,6 +1658,44 @@ canvas.addEventListener('touchend', e => {
 function setView(preset) {
   const v={front:[0,0.7,15],side:[Math.PI/2,0.7,15],top:[0,0.05,18],isometric:[0.45,0.88,14]}[preset];
   if(v){[orbitTheta,orbitPhi,orbitRadius]=v;} updateCamera();
+}
+
+// ─── FLOORPLAN VIEW ──────────────────────────────────────────────────────────────
+
+let floorplanViewMode = false;
+
+function toggleFloorplanView() {
+  floorplanViewMode = !floorplanViewMode;
+  const btn = document.getElementById('tbFloorplan');
+  if (btn) btn.classList.toggle('active', floorplanViewMode);
+  if (floorplanViewMode) {
+    // Switch to top-down view
+    orbitTheta = 0; orbitPhi = 0.01; orbitRadius = 16;
+    orbitTarget.set(0, 0, 0);
+    updateCamera();
+    // Hide roof meshes
+    buildingGroup.traverse(child => {
+      if (child.isMesh && child.userData.isRoof) {
+        child.userData._fpSavedVis = child.visible;
+        child.visible = false;
+      }
+    });
+    // Hide sky dome for cleaner view
+    skyDome.visible = false;
+  } else {
+    // Restore
+    buildingGroup.traverse(child => {
+      if (child.isMesh && child.userData._fpSavedVis !== undefined) {
+        child.visible = child.userData._fpSavedVis;
+        delete child.userData._fpSavedVis;
+      }
+    });
+    skyDome.visible = true;
+    // Return to isometric
+    orbitTheta = 0.45; orbitPhi = 0.88; orbitRadius = 14;
+    orbitTarget.set(0, 1.5, 0);
+    updateCamera();
+  }
 }
 
 updateCamera();

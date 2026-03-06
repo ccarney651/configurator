@@ -9,6 +9,7 @@
 function fmt(n) { return '£' + Math.round(n).toLocaleString('en-GB'); }
 
 function updatePriceDisplay() {
+  stateHistory.push();
   const total = calcTotal(state);
   document.getElementById('totalPrice').textContent = fmt(total);
 
@@ -18,16 +19,101 @@ function updatePriceDisplay() {
   document.getElementById('lbl-reinforceWalls').textContent   = `${fmt(Math.round(wallArea  * PRICING.reinforce_walls_sqm))} (£${PRICING.reinforce_walls_sqm}/m²)`;
   document.getElementById('lbl-reinforceCeiling').textContent = `${fmt(Math.round(floorArea * PRICING.reinforce_ceiling_sqm))} (£${PRICING.reinforce_ceiling_sqm}/m²)`;
 
-  document.getElementById('spec-width').textContent  = state.width.toFixed(1)  + 'm';
-  document.getElementById('spec-depth').textContent  = state.depth.toFixed(1)  + 'm';
-  document.getElementById('spec-height').textContent = state.height.toFixed(1) + 'm';
-  document.getElementById('spec-area').textContent   = (state.width * state.depth).toFixed(1) + 'm²';
+  document.getElementById('spec-width').textContent  = fmtDim(state.width);
+  document.getElementById('spec-depth').textContent  = fmtDim(state.depth);
+  document.getElementById('spec-height').textContent = fmtDim(state.height);
+  document.getElementById('spec-area').textContent   = fmtArea(state.width * state.depth);
   document.getElementById('spec-roof').textContent   = ROOF_STYLE_LABELS[state.roof] ?? '—';
   document.getElementById('spec-found').textContent  = FOUNDATION_LABELS[state.foundation] ?? '—';
 }
 
-// ─── DIMENSION SLIDERS (replaced by 3D wall arrows) ─────────────────────────────
-// Sliders removed — dimensions are now controlled by dragging the coloured ground arrows.
+// ─── UNDO / REDO ────────────────────────────────────────────────────────────────
+
+function undoState() { stateHistory.undo(); }
+function redoState() { stateHistory.redo(); }
+
+function pushHistory() { stateHistory.push(); }
+
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+    e.preventDefault(); undoState();
+  }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'Z' || (e.key === 'z' && e.shiftKey) || e.key === 'y')) {
+    e.preventDefault(); redoState();
+  }
+});
+
+// ─── DIMENSION SLIDERS ──────────────────────────────────────────────────────────
+
+function setDimension(dim, val) {
+  const v = parseFloat(val);
+  state[dim] = v;
+  const label = document.getElementById(dim + 'Val');
+  if (label) label.textContent = v.toFixed(1) + 'm';
+  buildRoom(); updatePriceDisplay();
+}
+
+function syncDimSliders() {
+  ['width','depth','height'].forEach(dim => {
+    const el = document.getElementById(dim + 'Slider');
+    if (el) { el.value = state[dim]; document.getElementById(dim+'Val').textContent = state[dim].toFixed(1)+'m'; }
+  });
+}
+
+// ─── FLIP / MIRROR ──────────────────────────────────────────────────────────────
+
+// ─── UNITS TOGGLE ───────────────────────────────────────────────────────────────
+
+function toggleUnits() {
+  state.units = state.units === 'metric' ? 'imperial' : 'metric';
+  const label = document.getElementById('unitsLabel');
+  if (label) label.textContent = state.units === 'metric' ? 'm' : 'ft';
+  const btn = document.getElementById('tbUnits');
+  if (btn) btn.classList.toggle('active', state.units === 'imperial');
+  updatePriceDisplay();
+  if (typeof syncDimSliders === 'function') syncDimSliders();
+}
+
+function fmtDim(metres) {
+  if (state.units === 'imperial') {
+    const totalInches = metres * 39.3701;
+    const feet = Math.floor(totalInches / 12);
+    const inches = Math.round(totalInches % 12);
+    return feet + "'" + inches + '"';
+  }
+  return metres.toFixed(1) + 'm';
+}
+
+function fmtArea(sqm) {
+  if (state.units === 'imperial') {
+    return (sqm * 10.7639).toFixed(0) + 'ft\u00B2';
+  }
+  return sqm.toFixed(1) + 'm\u00B2';
+}
+
+// ─── FLIP / MIRROR ──────────────────────────────────────────────────────────────
+
+function setWindowSill(val) {
+  state.windowSillAdjust = parseFloat(val);
+  const label = document.getElementById('windowSillVal');
+  if (label) label.textContent = (state.windowSillAdjust >= 0 ? '+' : '') + state.windowSillAdjust.toFixed(2) + 'm';
+  buildRoom();
+}
+
+function flipDesign() {
+  state.openings.forEach(op => { op.offset = -op.offset; });
+  buildRoom(); updatePriceDisplay();
+  renderOpeningsList();
+}
+
+// ─── SCENE ENVIRONMENT ──────────────────────────────────────────────────────────
+
+function selectScene(type, btn) {
+  const grid = btn.closest('.option-grid');
+  if (grid) grid.querySelectorAll('.option-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  setGroundType(type);
+}
 
 // ─── OPTION BUTTONS (structure, roof, cladding — NOT doors/windows) ────────────
 
@@ -50,7 +136,16 @@ function setRoofTilt(val) {
 
 function showFlatTilt(visible) {
   const sec = document.getElementById('flatTiltSection');
-  if (sec) sec.style.display = visible ? 'block' : 'none';
+  if (sec) sec.style.display = (visible === true || state.roof === 'flat') ? 'block' : 'none';
+  const apexSec = document.getElementById('apexPitchSection');
+  if (apexSec) apexSec.style.display = (state.roof === 'apex') ? 'block' : 'none';
+}
+
+function setApexPitch(val) {
+  state.apexPitch = parseFloat(val);
+  const label = document.getElementById('apexPitchVal');
+  if (label) label.textContent = state.apexPitch.toFixed(1) + 'm';
+  buildRoom(); updatePriceDisplay();
 }
 
 // ─── COLOUR SWATCHES ───────────────────────────────────────────────────────────
@@ -291,7 +386,7 @@ function renderSelectedOpening() {
  */
 function encodeStateToHash() {
   const snapshot = {
-    v: 2, // schema version — bump if state shape changes
+    v: 3, // schema version — bump if state shape changes
     width:        state.width,
     depth:        state.depth,
     height:       state.height,
@@ -329,6 +424,12 @@ function encodeStateToHash() {
     deckingMaterial:        state.deckingMaterial,
     deckingBalustrade:      state.deckingBalustrade,
     deckingBalustradeFinish: state.deckingBalustradeFinish,
+    // v3 additions
+    groundType:             state.groundType,
+    apexPitch:              state.apexPitch,
+    windowSillAdjust:       state.windowSillAdjust,
+    veranda:                { ...state.veranda },
+    gutterColour:           state.gutterColour,
   };
   return btoa(JSON.stringify(snapshot));
 }
@@ -336,8 +437,8 @@ function encodeStateToHash() {
 function decodeHashToState(hash) {
   try {
     const snap = JSON.parse(atob(hash));
-    // Accept v:1 (legacy) and v:2
-    if (snap.v !== 1 && snap.v !== 2) return false;
+    // Accept v:1 (legacy), v:2, and v:3
+    if (snap.v !== 1 && snap.v !== 2 && snap.v !== 3) return false;
 
     state.width        = snap.width        ?? state.width;
     state.depth        = snap.depth        ?? state.depth;
@@ -373,6 +474,15 @@ function decodeHashToState(hash) {
       state.deckingMaterial        = snap.deckingMaterial        ?? state.deckingMaterial;
       state.deckingBalustrade      = snap.deckingBalustrade      ?? state.deckingBalustrade;
       state.deckingBalustradeFinish = snap.deckingBalustradeFinish ?? state.deckingBalustradeFinish;
+    }
+
+    // v3 fields
+    if (snap.v >= 3) {
+      state.groundType        = snap.groundType        ?? state.groundType;
+      state.apexPitch         = snap.apexPitch         ?? state.apexPitch;
+      state.windowSillAdjust  = snap.windowSillAdjust  ?? state.windowSillAdjust;
+      if (snap.veranda) Object.assign(state.veranda, snap.veranda);
+      state.gutterColour      = snap.gutterColour      ?? state.gutterColour;
     }
 
     return true;
@@ -488,6 +598,13 @@ function selectCladdingVariant(variant, el) {
   el.classList.add('active');
 }
 
+function selectGutterColour(hex, el) {
+  state.gutterColour = hex;
+  document.querySelectorAll('#gutterSwatches .swatch').forEach(s => s.classList.remove('active'));
+  el.classList.add('active');
+  buildRoom();
+}
+
 function selectHandleColour(value, el) {
   state.handleColour = value;
   document.querySelectorAll('#handleSwatches .swatch').forEach(s => s.classList.remove('active'));
@@ -496,12 +613,12 @@ function selectHandleColour(value, el) {
 
 function selectInteriorWalls(value) {
   state.interiorWalls = value;
-  updatePriceDisplay();
+  buildRoom(); updatePriceDisplay();
 }
 
 function selectInteriorFloor(value) {
   state.interiorFloor = value;
-  updatePriceDisplay();
+  buildRoom(); updatePriceDisplay();
 }
 
 function updateFurniture(key, el) {
@@ -524,7 +641,7 @@ function selectDeckingMaterial(value, btn) {
     btn.closest('.option-grid').querySelectorAll('.option-btn').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
   }
-  updatePriceDisplay();
+  buildRoom(); updatePriceDisplay();
 }
 
 function selectDeckingBalustrade(value, btn) {
@@ -535,7 +652,21 @@ function selectDeckingBalustrade(value, btn) {
   }
   const finishRow = document.getElementById('deckingBalustradeFinishRow');
   if (finishRow) finishRow.style.display = value === 'none' ? 'none' : 'block';
-  updatePriceDisplay();
+  buildRoom(); updatePriceDisplay();
+}
+
+function toggleVeranda(btn) {
+  state.veranda.enabled = !state.veranda.enabled;
+  btn.classList.toggle('on');
+  document.getElementById('verandaSection').style.display = state.veranda.enabled ? 'block' : 'none';
+  buildRoom(); updatePriceDisplay();
+}
+
+function setVerandaDepth(val) {
+  state.veranda.depth = parseFloat(val);
+  const label = document.getElementById('verandaDepthVal');
+  if (label) label.textContent = state.veranda.depth.toFixed(1) + 'm';
+  buildRoom(); updatePriceDisplay();
 }
 
 function selectDeckingBalustradeFinish(value, btn) {
