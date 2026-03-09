@@ -20,62 +20,99 @@ renderer.outputEncoding    = THREE.sRGBEncoding;
 const scene  = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+// ─── DIRTY FLAG — hoisted so the whole file can call markDirty() ─────────────
+let _dirty = true;
+let _dirtyFrames = 0;
+function markDirty(frames = 2) {
+  _dirty = true;
+  _dirtyFrames = Math.max(_dirtyFrames, frames);
+}
+
+// texLoader hoisted here — used by setGroundType and makeWallMat before their call sites
+const texLoader = new THREE.TextureLoader();
+
+// Hemisphere light: sky colour from above, ground bounce from below
+// This gives PBR materials (MeshStandardMaterial) a much more natural base
+const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x5a8a3a, 0.55);
+scene.add(hemiLight);
+
 const sunLight = new THREE.DirectionalLight(0xfff8e7, 1.1);
 sunLight.position.set(8, 12, 6);
 sunLight.castShadow = true;
 sunLight.shadow.mapSize.set(2048, 2048);
-sunLight.shadow.camera.left = sunLight.shadow.camera.bottom = -14;
-sunLight.shadow.camera.right = sunLight.shadow.camera.top  =  14;
+sunLight.shadow.camera.left   = -16;
+sunLight.shadow.camera.right  =  16;
+sunLight.shadow.camera.top    =  16;
+sunLight.shadow.camera.bottom = -16;
+sunLight.shadow.bias = -0.0003;   // reduce shadow acne on flat surfaces
 scene.add(sunLight);
-const fillLight = new THREE.DirectionalLight(0xd0e8ff, 0.35);
+scene.add(sunLight.target);
+
+const fillLight = new THREE.DirectionalLight(0xd0e8ff, 0.28);
 fillLight.position.set(-5, 3, -5);
 scene.add(fillLight);
 
-// Radial gradient ground — green centre fading to fog colour at edges
-function createGroundTexture(centerColor, edgeColor) {
-  const size = 1024;
-  const c = document.createElement('canvas');
-  c.width = size; c.height = size;
-  const ctx = c.getContext('2d');
-  const grad = ctx.createRadialGradient(size/2, size/2, size*0.05, size/2, size/2, size*0.50);
-  grad.addColorStop(0,    centerColor);
-  grad.addColorStop(0.45, centerColor);
-  grad.addColorStop(0.75, edgeColor);
-  grad.addColorStop(1,    edgeColor);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, size, size);
-  const tex = new THREE.CanvasTexture(c);
-  tex.encoding = THREE.sRGBEncoding;
-  return tex;
-}
+// ─── GROUND ──────────────────────────────────────────────────────────────────
+// Ground uses real tiling textures loaded from assets/.
+// Fallback: if the texture fails to load (e.g. file not yet added),
+// a solid colour is used instead so the scene still looks reasonable.
 
 const GROUND_PRESETS = {
-  grass:  { center: '#4a9a2a', edge: '#c8dbc0', fog: 0xd5e6d0 },
-  patio:  { center: '#9a9080', edge: '#d0ccc4', fog: 0xd0ccc4 },
-  gravel: { center: '#8a8478', edge: '#ccc8c0', fog: 0xccc8c0 },
-  sand:   { center: '#c4ae6c', edge: '#e0d8c8', fog: 0xe0d8c8 },
+  grass:  { tex: 'assets/ground_grass.jpg',  color: 0x4a9a2a, fog: 0xd5e6d0, roughness: 0.95 },
+  patio:  { tex: 'assets/ground_patio.jpg',  color: 0x9a9080, fog: 0xd0ccc4, roughness: 0.88 },
+  gravel: { tex: 'assets/ground_gravel.jpg', color: 0x8a8478, fog: 0xccc8c0, roughness: 0.96 },
+  sand:   { tex: 'assets/ground_sand.jpg',   color: 0xc4ae6c, fog: 0xe0d8c8, roughness: 0.92 },
 };
 
-const groundTex = createGroundTexture('#4a9a2a', '#c8dbc0');
+// Ground plane: MeshStandardMaterial, receives shadows properly
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x4a9a2a, roughness: 0.95, metalness: 0.0,
+});
 const ground = new THREE.Mesh(
   new THREE.PlaneGeometry(50, 50),
-  new THREE.MeshLambertMaterial({ map: groundTex })
+  groundMat
 );
 ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
+// Load a tiling ground texture; tile it 20× across the 50m plane
+function loadGroundTex(url, onLoad) {
+  texLoader.load(
+    url,
+    tex => {
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(20, 20);
+      tex.encoding = THREE.sRGBEncoding;
+      onLoad(tex);
+    },
+    undefined,
+    () => onLoad(null)   // silently fall back to solid colour
+  );
+}
+
 function setGroundType(type) {
   state.groundType = type;
   const p = GROUND_PRESETS[type] || GROUND_PRESETS.grass;
-  const tex = createGroundTexture(p.center, p.edge);
-  ground.material.map = tex;
-  ground.material.needsUpdate = true;
+  groundMat.roughness = p.roughness;
+
+  loadGroundTex(p.tex, tex => {
+    if (tex) {
+      groundMat.map = tex;
+      groundMat.color.set(0xffffff);  // tint neutral when texture is present
+    } else {
+      groundMat.map = null;
+      groundMat.color.setHex(p.color);
+    }
+    groundMat.needsUpdate = true;
+    markDirty();
+  });
+
   scene.fog = new THREE.FogExp2(p.fog, 0.012);
-  // Update sky horizon to match
   skyDome.material.uniforms.uHorizon.value.setHex(p.fog);
+  markDirty();
 }
+
 
 const grid = new THREE.GridHelper(24, 24, 0x5a9a50, 0x5a9a50);
 grid.material.opacity = 0.08; grid.material.transparent = true;
@@ -87,27 +124,105 @@ scene.add(buildingGroup);
 scene.add(handlesGroup);
 
 // ─── SKY DOME ──────────────────────────────────────────────────────────────────
+// ─── TIME OF DAY ────────────────────────────────────────────────────────────
+// tod = 0.0 (dawn) → 0.5 (midday) → 1.0 (dusk)
+let tod = 0.55;  // default: mid-afternoon
+
+const TOD_PRESETS = [
+  // tod,  skyTop,    horizon,   sunColor,  sunIntensity, fillColor, fogColor
+  { t: 0.0, top: 0xff9966, hor: 0xffcc88, sun: 0xff8844, si: 0.6,  fill: 0xffd4a0, fog: 0xffcc88 }, // dawn
+  { t: 0.3, top: 0x6aabda, hor: 0xd4e8f8, sun: 0xfff5dd, si: 1.0,  fill: 0xd0e8ff, fog: 0xd4e8f8 }, // morning
+  { t: 0.55,top: 0x4a90c4, hor: 0xd5e6d0, sun: 0xfff8e7, si: 1.1,  fill: 0xd0e8ff, fog: 0xd5e6d0 }, // afternoon (default)
+  { t: 0.75,top: 0x3a6080, hor: 0xffc870, sun: 0xff9944, si: 0.85, fill: 0xffa060, fog: 0xffc870 }, // golden hour
+  { t: 1.0, top: 0x1a2840, hor: 0xff7744, sun: 0xff4422, si: 0.4,  fill: 0x334466, fog: 0xff7744 }, // dusk
+];
+
+function lerpPresets(t) {
+  const presets = TOD_PRESETS;
+  let lo = presets[0], hi = presets[presets.length - 1];
+  for (let i = 0; i < presets.length - 1; i++) {
+    if (t >= presets[i].t && t <= presets[i+1].t) { lo = presets[i]; hi = presets[i+1]; break; }
+  }
+  const f = lo.t === hi.t ? 0 : (t - lo.t) / (hi.t - lo.t);
+  function lc(a, b) { return new THREE.Color(a).lerp(new THREE.Color(b), f); }
+  return {
+    top: lc(lo.top, hi.top), hor: lc(lo.hor, hi.hor),
+    sun: lc(lo.sun, hi.sun), si: lo.si + (hi.si - lo.si) * f,
+    fill: lc(lo.fill, hi.fill), fog: lc(lo.fog, hi.fog),
+  };
+}
+
+function applyTOD(t) {
+  tod = Math.max(0, Math.min(1, t));
+  const p = lerpPresets(tod);
+  skyDome.material.uniforms.uTop.value.copy(p.top);
+  skyDome.material.uniforms.uHorizon.value.copy(p.hor);
+  skyDome.material.uniforms.uSunDir.value.copy(getSunDir(tod));
+  skyDome.material.uniforms.uSunColor.value.copy(p.sun);
+  sunLight.color.copy(p.sun);
+  sunLight.intensity = p.si;
+  fillLight.color.copy(p.fill);
+  // Hemisphere: sky colour shifts with time of day; ground bounce stays earthy
+  hemiLight.color.copy(p.top);
+  hemiLight.groundColor.lerp(new THREE.Color(0x5a8a3a), 0.5);
+  scene.fog = new THREE.FogExp2(p.fog.getHex(), 0.012);
+  markDirty();
+}
+
+function getSunDir(t) {
+  // Arc from east horizon (dawn) over south-zenith (noon) to west horizon (dusk)
+  const angle = Math.PI * t;  // 0 = east, PI/2 = overhead, PI = west
+  return new THREE.Vector3(
+    Math.cos(angle) * 0.8,    // X: east → west
+    Math.sin(angle),           // Y: horizon → sky → horizon
+    -0.5                       // Z: slight south bias
+  ).normalize();
+}
+
+function updateSunPosition(t) {
+  const dir = getSunDir(t);
+  const dist = 15;
+  sunLight.position.copy(dir).multiplyScalar(dist);
+  sunLight.target.position.set(0, 0, 0);
+  sunLight.target.updateMatrixWorld();
+  markDirty();
+}
+
+// Sky dome with sun disc in fragment shader
 const skyDome = new THREE.Mesh(
   new THREE.SphereGeometry(80, 32, 16),
   new THREE.ShaderMaterial({
     uniforms: {
-      uTop:     { value: new THREE.Color(0x4a90c4) },
-      uHorizon: { value: new THREE.Color(0xd5e6d0) },
+      uTop:      { value: new THREE.Color(0x4a90c4) },
+      uHorizon:  { value: new THREE.Color(0xd5e6d0) },
+      uSunDir:   { value: getSunDir(tod) },
+      uSunColor: { value: new THREE.Color(0xfff8e7) },
     },
     vertexShader: `
-      varying float vY;
+      varying vec3 vWorldPos;
       void main() {
-        vY = normalize(position).y;
+        vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
     fragmentShader: `
       uniform vec3 uTop;
       uniform vec3 uHorizon;
-      varying float vY;
+      uniform vec3 uSunDir;
+      uniform vec3 uSunColor;
+      varying vec3 vWorldPos;
       void main() {
-        float t = clamp((vY + 0.12) / 1.12, 0.0, 1.0);
-        gl_FragColor = vec4(mix(uHorizon, uTop, pow(t, 0.55)), 1.0);
+        vec3 dir = normalize(vWorldPos);
+        // Sky gradient
+        float t = clamp((dir.y + 0.12) / 1.12, 0.0, 1.0);
+        vec3 sky = mix(uHorizon, uTop, pow(t, 0.55));
+        // Sun disc + soft halo
+        float cosA = dot(dir, normalize(uSunDir));
+        float disc  = smoothstep(0.9980, 0.9995, cosA);      // sharp disc
+        float halo  = pow(max(0.0, cosA), 18.0) * 0.35;      // wide glow
+        float glow  = pow(max(0.0, cosA), 5.0)  * 0.10;      // atmospheric scatter
+        vec3  col   = sky + uSunColor * (disc + halo + glow);
+        gl_FragColor = vec4(col, 1.0);
       }
     `,
     side: THREE.BackSide,
@@ -117,6 +232,12 @@ const skyDome = new THREE.Mesh(
 scene.add(skyDome);
 scene.fog = new THREE.FogExp2(0xd5e6d0, 0.012);
 
+// Initialise ground now that skyDome exists
+setGroundType('grass');
+
+// Expose for UI — time-of-day slider can call this
+window.setTimeOfDay = function(t) { applyTOD(t); updateSunPosition(t); };
+
 // ─── WALL DIMENSION ARROWS ────────────────────────────────────────────────────
 const wallArrowGroup = new THREE.Group();
 scene.add(wallArrowGroup);
@@ -124,7 +245,6 @@ const wallLabels = {};
 
 // ─── MATERIALS ─────────────────────────────────────────────────────────────────
 
-const texLoader = new THREE.TextureLoader();
 
 function makeWallMat(w, h) {
   const texFile = { timber:'assets/tex_timber.jpg', render:'assets/tex_render.jpg', composite:'assets/tex_composite.jpg', cedar:'assets/tex_cedar.jpg' }[state.cladding] || 'assets/tex_timber.jpg';
@@ -135,7 +255,9 @@ function makeWallMat(w, h) {
   } else {
     tex.repeat.set(Math.max(1, Math.round(w * 1.2)), Math.max(1, Math.round(h * 0.8)));
   }
-  const mat = new THREE.MeshLambertMaterial({ map: tex });
+  // Roughness varies by cladding material feel
+  const roughness = { timber: 0.88, cedar: 0.85, composite: 0.70, render: 0.92 }[state.cladding] ?? 0.88;
+  const mat = new THREE.MeshStandardMaterial({ map: tex, roughness, metalness: 0.0 });
   if (state.claddingTint) mat.color.set(state.claddingTint);
   return mat;
 }
@@ -144,21 +266,32 @@ function makeRoofMat() {
   const texFile = { epdm:'assets/roof_epdm.jpg', shingle_grey:'assets/roof_shingle_grey.jpg', shingle_red:'assets/roof_shingle_red.jpg', grass:'assets/roof_grass.jpg', pebbles:'assets/roof_pebbles.jpg', cedar:'assets/roof_cedar.jpg' }[state.roofFinish] || 'assets/roof_epdm.jpg';
   const tex = texLoader.load(texFile);
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.encoding = THREE.sRGBEncoding; tex.repeat.set(4, 4);
-  const mat = new THREE.MeshLambertMaterial({ map: tex });
+  // EPDM is very matte; shingles have slight texture depth; green roof is rough
+  const roofRoughness = { epdm: 0.96, shingle_grey: 0.82, shingle_red: 0.82, grass: 0.98, pebbles: 0.90, cedar: 0.84 }[state.roofFinish] ?? 0.90;
+  const mat = new THREE.MeshStandardMaterial({ map: tex, roughness: roofRoughness, metalness: 0.0 });
   if (state.claddingTint) mat.color.set(state.claddingTint);
   return mat;
 }
 
-const glassMat = new THREE.MeshPhongMaterial({ color: 0xa8d8ea, transparent: true, opacity: 0.2, shininess: 200, specular: 0xffffff, side: THREE.DoubleSide, depthWrite: false });
-let frameMat = new THREE.MeshLambertMaterial({ color: 0x1a1a1a });
+// Glass: physically-based, slightly reflective
+const glassMat = new THREE.MeshStandardMaterial({
+  color: 0xa8d8ea, transparent: true, opacity: 0.18,
+  roughness: 0.05, metalness: 0.1,
+  side: THREE.DoubleSide, depthWrite: false,
+});
+// Frame: aluminium-style — slightly metallic
+let frameMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.45, metalness: 0.55 });
 function getFrameMat() {
   frameMat.color.set(state.frameColour || '#1a1a1a');
   return frameMat;
 }
-const slabMat  = new THREE.MeshLambertMaterial({ color: 0xccccbb });
-const floorMat = new THREE.MeshLambertMaterial({ color: 0xc8a87a });
-const deckMat  = new THREE.MeshLambertMaterial({ color: 0x7a5210 });
-const boardMat = new THREE.MeshLambertMaterial({ color: 0x6b4810 });
+// Concrete slab
+const slabMat  = new THREE.MeshStandardMaterial({ color: 0xccccbb, roughness: 0.92, metalness: 0.0 });
+// Interior floor base colour (overridden per finish below)
+const floorMat = new THREE.MeshStandardMaterial({ color: 0xc8a87a, roughness: 0.65, metalness: 0.0 });
+// Decking
+const deckMat  = new THREE.MeshStandardMaterial({ color: 0x7a5210, roughness: 0.80, metalness: 0.0 });
+const boardMat = new THREE.MeshStandardMaterial({ color: 0x6b4810, roughness: 0.85, metalness: 0.0 });
 
 // Interior colour maps
 const INTERIOR_FLOOR_COLORS = {
@@ -705,20 +838,22 @@ function buildGuttering(w, d, h, hw, hd, ov) {
 // ─── MAIN BUILD ────────────────────────────────────────────────────────────────
 
 function buildRoom() {
+  markDirty(8);  // GLBs load async — keep rendering for a few frames
   while (buildingGroup.children.length) buildingGroup.remove(buildingGroup.children[0]);
   const w=state.width, d=state.depth, h=state.height, hw=w/2, hd=d/2;
   const wallMat = makeWallMat(w,h);
 
   box(w+0.3,0.12,d+0.3,0,0.06,0,slabMat); box(w,0.06,d,0,0.15,0,floorMat);
 
-  // Interior floor surface
+  // Interior floor surface — roughness varies by finish
   const intFloorCol = INTERIOR_FLOOR_COLORS[state.interiorFloor] ?? 0xc8a87a;
-  const intFloorMat = new THREE.MeshLambertMaterial({ color: intFloorCol });
+  const floorRoughMap = { oak:0.70, walnut:0.65, farm_oak:0.72, tiles:0.40, polished_concrete:0.30, gym_black:0.60, white_marble:0.25, rubber:0.85 };
+  const intFloorMat = new THREE.MeshStandardMaterial({ color: intFloorCol, roughness: floorRoughMap[state.interiorFloor] ?? 0.70, metalness: 0.0 });
   box(w-0.02, 0.005, d-0.02, 0, 0.185, 0, intFloorMat);
 
   // Interior wall surfaces (thin inner faces)
   const intWallCol = INTERIOR_WALL_COLORS[state.interiorWalls] ?? 0xf5f5f5;
-  const intWallMat = new THREE.MeshLambertMaterial({ color: intWallCol, side: THREE.FrontSide });
+  const intWallMat = new THREE.MeshStandardMaterial({ color: intWallCol, roughness: 0.88, metalness: 0.0, side: THREE.FrontSide });
 
   const wallOps = { front:[], back:[], left:[], right:[] };
   state.openings.forEach(op => wallOps[op.wall].push(opToDescriptor(op)));
@@ -758,8 +893,9 @@ function buildRoom() {
     const dw = Math.min(w * 1.5, Math.sqrt(da * (w / Math.max(w, 3)) * 2));
     const dd = da / dw;
     const deckCol = { softwood: 0x7a5210, hardwood: 0x5a3a10, composite: 0x6b6055 }[state.deckingMaterial] || 0x7a5210;
-    const dMat = new THREE.MeshLambertMaterial({ color: deckCol });
-    const dBoardMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(deckCol).multiplyScalar(0.85) });
+    const deckRough = { softwood: 0.82, hardwood: 0.78, composite: 0.65 }[state.deckingMaterial] ?? 0.82;
+    const dMat = new THREE.MeshStandardMaterial({ color: deckCol, roughness: deckRough, metalness: 0.0 });
+    const dBoardMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(deckCol).multiplyScalar(0.85), roughness: deckRough + 0.05, metalness: 0.0 });
 
     // Deck platform
     box(dw, 0.07, dd, 0, 0.18, hd + dd/2 + 0.02, dMat);
@@ -801,7 +937,7 @@ function buildRoom() {
 
       // Fill between posts
       if (bType === 'glass' || bType === 'frameless') {
-        const gMat = new THREE.MeshPhongMaterial({ color: 0xa8d8ea, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false });
+        const gMat = new THREE.MeshStandardMaterial({ color: 0xa8d8ea, transparent: true, opacity: 0.22, roughness: 0.05, metalness: 0.1, side: THREE.DoubleSide, depthWrite: false });
         box(dw, postH * 0.8, 0.01, 0, 0.18 + postH * 0.45, deckZ1, gMat); // front
         box(0.01, postH * 0.8, dd, deckX0, 0.18 + postH * 0.45, hd + dd/2 + 0.02, gMat); // left
         box(0.01, postH * 0.8, dd, deckX1, 0.18 + postH * 0.45, hd + dd/2 + 0.02, gMat); // right
@@ -1302,6 +1438,7 @@ let orbitTheta=0.45, orbitPhi=0.88, orbitRadius=14;
 const orbitTarget = new THREE.Vector3(0, 1.5, 0);
 
 function updateCamera() {
+  markDirty();
   camera.position.set(
     orbitTarget.x + orbitRadius*Math.sin(orbitPhi)*Math.sin(orbitTheta),
     orbitTarget.y + orbitRadius*Math.cos(orbitPhi),
@@ -1700,11 +1837,30 @@ function toggleFloorplanView() {
 
 updateCamera();
 
+// ─── DIRTY FLAG (defined early — used throughout file) ───────────────────────
+// markDirty() is hoisted via function declaration above; this block just
+// re-exposes it on window for external callers after everything is set up.
+window.markSceneDirty = markDirty;
+
 function onResize() {
-  const vp=document.querySelector('.viewport');
-  renderer.setSize(vp.clientWidth,vp.clientHeight);
-  camera.aspect=vp.clientWidth/vp.clientHeight;
+  const vp = document.querySelector('.viewport');
+  renderer.setSize(vp.clientWidth, vp.clientHeight);
+  camera.aspect = vp.clientWidth / vp.clientHeight;
   camera.updateProjectionMatrix();
+  markDirty();
 }
-window.addEventListener('resize',onResize); onResize();
-(function loop(){requestAnimationFrame(loop);renderer.render(scene,camera);updateWallLabels();})();
+window.addEventListener('resize', onResize); onResize();
+
+// Patch updateCamera so every camera move marks dirty
+const _origUpdateCamera = updateCamera;
+// (updateCamera is defined above — we wrap it after definition)
+
+(function loop() {
+  requestAnimationFrame(loop);
+  if (_dirty || _dirtyFrames > 0) {
+    renderer.render(scene, camera);
+    updateWallLabels();
+    if (_dirtyFrames > 0) _dirtyFrames--;
+    else _dirty = false;
+  }
+})();

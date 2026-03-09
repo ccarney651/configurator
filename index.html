@@ -4,12 +4,23 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Garden Room Configurator</title>
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#274833">
 
   <!-- Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
 
   <!-- Styles -->
   <link rel="stylesheet" href="css/style.css">
+  <style>
+    /* Prevent double-tap zoom on buttons/inputs */
+    button, input, select, textarea { touch-action: manipulation; }
+    /* Allow Three.js to handle all touch events on the canvas */
+    #canvas { touch-action: none; }
+    /* Prevent pull-to-refresh interfering with panel scroll */
+    .tab-panel { overscroll-behavior: contain; }
+  </style>
 
   <!-- Three.js + GLTFLoader -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -38,7 +49,7 @@
     <div class="view-hint">Drag to orbit · <kbd>Shift</kbd>+drag to pan · Scroll to zoom · Drag arrows to resize</div>
 
     <!-- Viewport toolbar -->
-    <div class="viewport-toolbar">
+    <div class="viewport-toolbar" role="toolbar" aria-label="View controls">
       <button class="tb-btn" id="tbUndo" onclick="undoState()" title="Undo (Ctrl+Z)" disabled>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10h13a4 4 0 010 8H7"/><path d="M3 10l5-5M3 10l5 5"/></svg>
       </button>
@@ -174,6 +185,18 @@
           <span class="opt-icon">&#127958;</span>Sand
         </button>
       </div>
+    </div>
+
+    <!-- Time of Day -->
+    <div class="section">
+      <div class="section-title">Time of Day</div>
+      <div class="dim-row">
+        <span class="dim-label" style="width:36px;font-size:18px;text-align:center">&#127774;</span>
+        <input type="range" id="todSlider" min="0" max="1" step="0.01" value="0.55"
+               oninput="if(typeof setTimeOfDay==='function') setTimeOfDay(parseFloat(this.value))">
+        <span class="dim-label" style="width:36px;font-size:18px;text-align:center">&#127762;</span>
+      </div>
+      <p class="helper-text" style="margin:4px 0 0 0;font-size:11px">Drag to change sun position &amp; lighting mood.</p>
     </div>
 
   </div><!-- /tab-style -->
