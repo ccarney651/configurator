@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pricing Admin — Garden Room Configurator</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Playfair+Display:wght@500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/admin.css">
+</head>
+<body>
+
+<!-- ── Password gate ──────────────────────────────────────────────────────── -->
+<div id="gateScreen">
+  <div class="gate-box">
+    <h1>Pricing Admin</h1>
+    <p>Enter the admin password to manage pricing</p>
+    <input type="password" id="gatePassword" placeholder="Password"
+           onkeydown="if(event.key==='Enter') checkPassword()">
+    <button onclick="checkPassword()">Enter</button>
+    <p id="gateError" style="display:none">Incorrect password.</p>
+  </div>
+</div>
+
+<!-- ── Admin panel (shown after authentication) ───────────────────────────── -->
+<div id="adminPanel" style="display:none">
+
+  <div class="admin-header">
+    <h1>Pricing Admin Panel</h1>
+    <div class="admin-header-actions">
+      <button class="btn-save" onclick="savePricing()">Save Changes</button>
+      <button class="btn-reset" onclick="resetPricing()">Reset to Defaults</button>
+      <a class="btn-back" href="index.html">← Back to Configurator</a>
+    </div>
+  </div>
+
+  <div class="admin-body">
+    <div class="admin-intro">
+      Changes saved here are stored in your browser and applied immediately to all new quotes.
+      Fields marked <span class="placeholder-badge">TBC</span> have placeholder values — confirm with employer before going live.
+    </div>
+    <div id="adminForm"></div>
+  </div>
+
+</div>
+
+<!-- Save notification -->
+<div id="saveMsg">Saved successfully.</div>
+
+<!-- Load pricing.js for PRICING_DEFAULTS (read-only) -->
+<script src="js/state.js"></script>
+<script src="js/pricing.js"></script>
+<script>
+// ─── CONFIG ────────────────────────────────────────────────────────────────────
+// Change this password before deploying
+const ADMIN_PASSWORD = 'gardenroom2024';
+
+// ─── SECTION GROUPS ────────────────────────────────────────────────────────────
+const ADMIN_SECTIONS = [
+  { title: 'Foundation',               prefix: 'foundation_' },
+  { title: 'Roof Style Add-ons',        prefix: 'roof_style_' },
+  { title: 'Roof Finish Add-ons',       prefix: 'roof_finish_' },
+  { title: 'Rooflight',                 prefix: 'rooflight_' },
+  { title: 'Roof Lantern',              keys: ['roof_lantern'] },
+  { title: 'Cladding Add-ons',          prefix: 'cladding_' },
+  { title: 'Doors',                     prefix: 'door_' },
+  { title: 'Windows',                   prefix: 'window_' },
+  { title: 'Structural Reinforcement',  prefix: 'reinforce_' },
+  { title: 'Electrical & Heating',      prefix: 'electrical_' },
+  { title: 'Lighting',                  prefix: 'lighting_' },
+  { title: 'Decking',                   prefix: 'decking_' },
+  { title: 'Structure Type',            prefix: 'structure_' },
+  { title: 'Veranda',                   prefix: 'veranda_' },
+  { title: 'Interior — Walls',          prefix: 'interior_walls_' },
+  { title: 'Interior — Flooring',       prefix: 'interior_floor_' },
+  { title: 'Furniture & Fittings',      prefix: 'furniture_' },
+];
+
+// Keys with unconfirmed placeholder prices — shown with TBC badge
+const PLACEHOLDER_KEYS = new Set([
+  'roof_finish_corrugated','roof_finish_copper','roof_finish_shingle_black','roof_finish_coated_tile',
+  'rooflight_small','rooflight_medium','rooflight_large',
+  'cladding_vertical_cedar','cladding_redwood_vertical','cladding_horizontal_cedar',
+  'cladding_thermowood_natural','cladding_thermowood_grey','cladding_thermowood_black',
+  'cladding_shiplap_white','cladding_shiplap_grey','cladding_shiplap_black',
+  'cladding_stone_01','cladding_stone_02','cladding_brick_red_01','cladding_brick_red_02',
+  'cladding_brick_yellow','cladding_fibre_cement','cladding_metal_sheet',
+  'electrical_socket_double','electrical_socket_floor','electrical_socket_usb',
+  'electrical_socket_tv','electrical_socket_external',
+  'decking_hardwood_sqm','decking_composite_sqm',
+  'decking_balustrade_glass_lm','decking_balustrade_picket_lm','decking_balustrade_frameless_lm',
+  'structure_partial','structure_attached',
+  'veranda_per_sqm',
+  'interior_walls_charcoal_sqm','interior_walls_plywood_sqm','interior_walls_oak_sqm',
+  'interior_walls_tongue_groove_sqm',
+  'interior_floor_oak_sqm','interior_floor_walnut_sqm','interior_floor_farm_oak_sqm',
+  'interior_floor_tiles_sqm','interior_floor_polished_concrete_sqm',
+  'interior_floor_gym_black_sqm','interior_floor_white_marble_sqm','interior_floor_rubber_sqm',
+  ...Object.keys(PRICING_DEFAULTS).filter(k => k.startsWith('furniture_')),
+]);
+
+// ─── AUTHENTICATION ────────────────────────────────────────────────────────────
+function checkPassword() {
+  const val = document.getElementById('gatePassword').value;
+  if (val === ADMIN_PASSWORD) {
+    sessionStorage.setItem('pricing_admin_auth', '1');
+    showPanel();
+  } else {
+    const err = document.getElementById('gateError');
+    err.style.display = 'block';
+    setTimeout(() => { err.style.display = 'none'; }, 3000);
+  }
+}
+
+function showPanel() {
+  document.getElementById('gateScreen').style.display = 'none';
+  document.getElementById('adminPanel').style.display = 'block';
+  buildForm();
+}
+
+if (sessionStorage.getItem('pricing_admin_auth') === '1') showPanel();
+
+// ─── FORM BUILDER ──────────────────────────────────────────────────────────────
+function humanLabel(key) {
+  return key
+    .replace(/_sqm$/, ' (per m²)')
+    .replace(/_lm$/, ' (per linear metre)')
+    .replace(/_per_screw$/, ' (per screw)')
+    .replace(/_per_sqm$/, ' (density per m²)')
+    .replace(/_/g, ' ');
+}
+
+function buildForm() {
+  const saved = JSON.parse(localStorage.getItem('gardenroom_pricing') || '{}');
+  const allKeys = Object.keys(PRICING_DEFAULTS);
+  const container = document.getElementById('adminForm');
+  let html = '';
+
+  ADMIN_SECTIONS.forEach(({ title, prefix, keys }) => {
+    // Get keys for this section
+    const sectionKeys = keys
+      ? keys.filter(k => k in PRICING_DEFAULTS)
+      : allKeys.filter(k => k.startsWith(prefix));
+
+    if (!sectionKeys.length) return;
+
+    html += `<div class="admin-section"><h2>${title}</h2><div class="admin-grid">`;
+    sectionKeys.forEach(key => {
+      const current     = saved[key] ?? PRICING_DEFAULTS[key];
+      const isPlaceholder = PLACEHOLDER_KEYS.has(key);
+      const label       = humanLabel(key.replace(prefix || '', ''));
+      html += `
+        <div class="admin-field${isPlaceholder ? ' admin-field--placeholder' : ''}">
+          <label title="${key}">
+            ${label}
+            ${isPlaceholder ? '<span class="placeholder-badge">TBC</span>' : ''}
+          </label>
+          <input type="number" step="any" min="0" data-key="${key}" value="${current}">
+        </div>`;
+    });
+    html += '</div></div>';
+  });
+
+  container.innerHTML = html;
+}
+
+// ─── SAVE / RESET ──────────────────────────────────────────────────────────────
+function savePricing() {
+  const inputs = document.querySelectorAll('#adminForm input[data-key]');
+  const result = {};
+  inputs.forEach(inp => {
+    result[inp.dataset.key] = parseFloat(inp.value) || 0;
+  });
+  localStorage.setItem('gardenroom_pricing', JSON.stringify(result));
+  showSaveMsg('Saved successfully.');
+}
+
+function resetPricing() {
+  if (!confirm('Reset all prices to developer defaults? Any saved changes will be lost.')) return;
+  localStorage.removeItem('gardenroom_pricing');
+  buildForm();
+  showSaveMsg('Prices reset to defaults.');
+}
+
+function showSaveMsg(text) {
+  const msg = document.getElementById('saveMsg');
+  msg.textContent = text;
+  msg.style.display = 'block';
+  setTimeout(() => { msg.style.display = 'none'; }, 2500);
+}
+</script>
+
+</body>
+</html>
